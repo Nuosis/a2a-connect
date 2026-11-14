@@ -23,15 +23,22 @@ def handle_message(config: Config, state: State, message: dict) -> None:
     if state.is_done(message_id) or message.get("status") != "pending":
         return
     thread = str(message.get("thread_id") or message.get("session_id") or message_id)
-    log.info("message %s from %s (thread %s)", message_id, message.get("from_agent"), thread)
-    hub.set_status(config, message_id, "processing")
+    is_response = message.get("kind") == "response" or message.get("message_type") == "reply"
+    log.info(
+        "%s %s from %s (thread %s)",
+        "reply" if is_response else "message", message_id, message.get("from_agent"), thread,
+    )
+    # The message stays pending until it is answered, so a restart picks it up again.
     try:
-        text, session_id = codex.run(config, codex.prompt_for(message), state.session_for(thread))
+        text, session_id = codex.run(
+            config, codex.prompt_for(message, is_response), state.session_for(thread)
+        )
         if session_id:
             state.remember(thread, session_id)
-        hub.reply(config, message_id, text)
+        if not is_response:  # a reply is information for Codex, never answered again
+            hub.reply(config, message_id, text)
+            log.info("replied to %s", message_id)
         hub.set_status(config, message_id, "completed")
-        log.info("replied to %s", message_id)
     except Exception as exc:  # report the failure on the message; keep serving
         log.exception("message %s failed", message_id)
         hub.set_status(config, message_id, "failed", str(exc))
@@ -74,14 +81,17 @@ def install_service(_args: argparse.Namespace) -> None:
     path_env = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     log_file = STATE_DIR / "connector.log"
+    env = {"PATH": path_env, "A2A_CONNECT_CONFIG": str(CONFIG_PATH), "A2A_CONNECT_STATE": str(STATE_DIR)}
     if platform.system() == "Darwin":
         plist = Path("~/Library/LaunchAgents/com.clarity.a2a-connect.plist").expanduser()
+        plist.parent.mkdir(parents=True, exist_ok=True)
+        env_xml = "".join(f"<key>{k}</key><string>{v}</string>" for k, v in env.items())
         plist.write_text(f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>com.clarity.a2a-connect</string>
   <key>ProgramArguments</key><array><string>{exe}</string><string>run</string></array>
-  <key>EnvironmentVariables</key><dict><key>PATH</key><string>{path_env}</string></dict>
+  <key>EnvironmentVariables</key><dict>{env_xml}</dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>10</integer>
@@ -101,7 +111,7 @@ Description=Clarity A2A connector for Codex
 
 [Service]
 ExecStart={exe} run
-Environment=PATH={path_env}
+{chr(10).join(f'Environment="{k}={v}"' for k, v in env.items())}
 Restart=always
 RestartSec=10
 

@@ -6,6 +6,7 @@ import argparse
 import logging
 import os
 import platform
+import plistlib
 import shutil
 import subprocess
 import sys
@@ -85,20 +86,20 @@ def install_service(_args: argparse.Namespace) -> None:
     if platform.system() == "Darwin":
         plist = Path("~/Library/LaunchAgents/com.clarity.a2a-connect.plist").expanduser()
         plist.parent.mkdir(parents=True, exist_ok=True)
-        env_xml = "".join(f"<key>{k}</key><string>{v}</string>" for k, v in env.items())
-        plist.write_text(f"""<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>com.clarity.a2a-connect</string>
-  <key>ProgramArguments</key><array><string>{exe}</string><string>run</string></array>
-  <key>EnvironmentVariables</key><dict>{env_xml}</dict>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>ThrottleInterval</key><integer>10</integer>
-  <key>StandardOutPath</key><string>{log_file}</string>
-  <key>StandardErrorPath</key><string>{log_file}</string>
-</dict></plist>
-""")
+        with plist.open("wb") as handle:
+            plistlib.dump(
+                {
+                    "Label": "com.clarity.a2a-connect",
+                    "ProgramArguments": [exe, "run"],
+                    "EnvironmentVariables": env,
+                    "RunAtLoad": True,
+                    "KeepAlive": True,
+                    "ThrottleInterval": 10,
+                    "StandardOutPath": str(log_file),
+                    "StandardErrorPath": str(log_file),
+                },
+                handle,
+            )
         uid = os.getuid()
         subprocess.call(["launchctl", "bootout", f"gui/{uid}", str(plist)], stderr=subprocess.DEVNULL)
         subprocess.check_call(["launchctl", "bootstrap", f"gui/{uid}", str(plist)])

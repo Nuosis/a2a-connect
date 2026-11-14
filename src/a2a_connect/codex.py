@@ -12,14 +12,16 @@ from .config import Config
 
 def prompt_for(message: dict, is_response: bool = False) -> str:
     if is_response:
-        return "\n".join([
+        parts = [
             f"A2A reply from {message.get('from_agent')} to your earlier message "
             f"(thread {message.get('thread_id') or message.get('session_id')}):",
             "",
             str(message.get("message") or ""),
-            "",
-            "This is the answer to what you sent. Use it; no reply will be sent.",
-        ])
+        ]
+        if message.get("payload"):
+            parts += ["", "Payload (JSON):", json.dumps(message["payload"], indent=2)]
+        parts += ["", "This is the answer to what you sent. Use it; no reply will be sent."]
+        return "\n".join(parts)
     parts = [
         f"A2A message from {message.get('from_agent')} "
         f"(message {message.get('id')}, thread {message.get('thread_id') or message.get('session_id')}):",
